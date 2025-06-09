@@ -1,1 +1,1 @@
-web: xvfb-run --server-args="-screen 0 1024x768x24" gunicorn --workers=1 --timeout=180 --preload app:app
+web: XAUTHORITY=/tmp/.Xauthority xvfb-run --server-args="-screen 0 800x600x16" gunicorn --workers=1 --timeout=300 --preload --max-requests=100 app:app

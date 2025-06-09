@@ -228,7 +228,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
-socketio = SocketIO(app, max_http_buffer_size=512 * 1024)  # Further reduced buffer
+socketio = SocketIO(app, max_http_buffer_size=256 * 1024, ping_timeout=20, ping_interval=10)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -240,18 +240,19 @@ llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", convert_system_mes
 
 sessions = {}
 
-def capture_screen(scale_factor=0.15):
+def capture_screen(scale_factor=0.1):
     try:
+        logger.info(f"DISPLAY={os.getenv('DISPLAY')}, XAUTHORITY={os.getenv('XAUTHORITY')}")
         import pyautogui
         pyautogui.FAILSAFE = False
         screenshot = pyautogui.screenshot()
-        img = screenshot
+        img = Image.frombytes('RGB', screenshot.size, screenshot.rgb)
         if scale_factor != 1.0:
             new_width = int(img.width * scale_factor)
             new_height = int(img.height * scale_factor)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         buffered = BytesIO()
-        img.save(buffered, format="JPEG", quality=30)
+        img.save(buffered, format="JPEG", quality=20)
         img_str = base64.b64encode(buffered.getvalue()).decode()
         logger.debug(f"Screen captured, size: {len(img_str)} bytes")
         return img_str
@@ -259,7 +260,7 @@ def capture_screen(scale_factor=0.15):
         logger.error(f"Screen capture error: {str(e)}")
         return None
 
-def process_frame(frame_data, scale_factor=0.15):
+def process_frame(frame_data, scale_factor=0.1):
     try:
         img_data = base64.b64decode(frame_data.split(",")[1])
         img = Image.open(BytesIO(img_data))
@@ -268,7 +269,7 @@ def process_frame(frame_data, scale_factor=0.15):
             new_height = int(img.height * scale_factor)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         buffered = BytesIO()
-        img.save(buffered, format="JPEG", quality=20)
+        img.save(buffered, format="JPEG", quality=15)
         img_str = base64.b64encode(buffered.getvalue()).decode()
         logger.debug(f"Camera frame processed, size: {len(img_str)} bytes")
         return img_str
@@ -319,7 +320,7 @@ def start_stream():
     else:
         logger.info("Camera stream started (client-side)")
     logger.info(f"Session {session_id} reset for mode: {mode}")
-    return jsonify({'status': '', 'redirect': url_for('chat', mode=mode)})
+    return jsonify({'redirect': url_for('chat', mode=mode)})
 
 @app.route('/stop_stream', methods=['POST'])
 def stop_stream():
@@ -364,6 +365,8 @@ def video_feed(mode):
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' +
                            base64.b64decode(frame) + b'\r\n')
+                else:
+                    logger.debug("No camera frame available, skipping")
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @socketio.on('camera_frame')
@@ -400,6 +403,9 @@ def process_audio():
         frame = sessions[session_id]['frame']
         if not frame:
             logger.error(f"No frame available for mode: {mode}")
+            if mode == 'camera':
+                logger.info("Waiting for camera frame, using placeholder response")
+                return jsonify({'response': 'Please wait, camera frame not ready yet'})
             return jsonify({'error': 'No frame available'}), 500
 
         system_prompt = SystemMessage(content="You are a helpful AI assistant analyzing images and responding to user prompts.")
@@ -418,4 +424,4 @@ def process_audio():
         return jsonify({'error': f"Failed to process audio: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
+    socketio.run(app, debug=True, host='0.0.0.0', port=10000, allow_unsafe_werkzeug=True)
