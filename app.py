@@ -35,8 +35,15 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Session storage file
-SESSION_FILE = '/tmp/sessions.pkl'
+# Session storage file (persistent disk)
+SESSION_FILE = '/data/sessions.pkl'
+
+# Ensure /data directory exists
+if not os.path.exists('/data'):
+    try:
+        os.makedirs('/data')
+    except Exception as e:
+        logger.error(f"Failed to create /data directory: {e}")
 
 # Load or initialize sessions
 def load_sessions():
@@ -82,7 +89,7 @@ if LANGCHAIN_AVAILABLE:
 else:
     llm = None
 
-def process_frame(frame_data, scale_factor=0.3):
+def process_frame(frame_data, scale_factor=0.2):  # Reduced scale factor
     try:
         if ',' in frame_data:
             img_data = base64.b64decode(frame_data.split(",")[1])
@@ -94,7 +101,7 @@ def process_frame(frame_data, scale_factor=0.3):
             new_height = int(img.height * scale_factor)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         buffered = BytesIO()
-        img.save(buffered, format="JPEG", quality=50)
+        img.save(buffered, format="JPEG", quality=40)  # Reduced quality
         img_str = base64.b64encode(buffered.getvalue()).decode()
         logger.debug(f"Frame processed, size: {len(img_str)} bytes")
         return img_str
@@ -102,8 +109,8 @@ def process_frame(frame_data, scale_factor=0.3):
         logger.error(f"Frame processing error: {str(e)}")
         return None
     finally:
-        if 'img' in locals():
-            img.close()
+        # No img.close() needed for BytesIO
+        pass
 
 @app.route('/')
 def index():
@@ -200,7 +207,11 @@ def process_audio():
     logger.info(f"Session ID: {session_id}")
     if not session_id or session_id not in sessions:
         logger.error(f"Session not found for session_id: {session_id}")
-        return jsonify({'error': 'Session not found'}), 400
+        # Attempt to recover session
+        sessions[session_id] = {'mode': 'camera', 'responses': [], 'frame': None}
+        save_sessions(sessions)
+        logger.info(f"Recovered session for session_id: {session_id}")
+        return jsonify({'error': 'Session recovered, please retry'}), 400
 
     data = request.get_json()
     prompt = data.get('prompt')
@@ -214,10 +225,25 @@ def process_audio():
         return jsonify({'error': 'Stream not initialized'}), 400
 
     try:
-        # For testing: Skip frame requirement
-        logger.debug(f"Processing prompt without frame: {prompt}")
-        system_prompt = SystemMessage(content="You are a helpful AI assistant responding to user prompts.")
-        user_prompt = HumanMessage(content=[{"type": "text", "text": prompt}])
+        # Wait for frame (optional for testing)
+        max_wait = 5
+        start_time = time.time()
+        while not sessions[session_id].get('frame') and time.time() - start_time < max_wait:
+            time.sleep(0.1)
+            logger.debug("Waiting for frame...")
+
+        frame = sessions[session_id].get('frame')
+        system_prompt = SystemMessage(content="You are a helpful AI assistant analyzing images and responding to user prompts.")
+        if frame:
+            logger.debug(f"Processing with frame, size: {len(frame)} bytes")
+            user_prompt = HumanMessage(content=[
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": f"data:image/jpeg;base64,{frame}"}
+            ])
+        else:
+            logger.warning("No frame available, using text-only prompt")
+            user_prompt = HumanMessage(content=[{"type": "text", "text": prompt}])
+
         logger.debug(f"Invoking LLM with prompt: {prompt}")
         response = llm.invoke([system_prompt, user_prompt])
         response_text = response.content if hasattr(response, 'content') else str(response)

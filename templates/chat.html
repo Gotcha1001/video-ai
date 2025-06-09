@@ -85,6 +85,7 @@
         let canvas = document.createElement('canvas');
         let context = canvas.getContext('2d');
         let frameInterval;
+        let lastPrompt;
 
         function initSocket() {
             socket = io.connect(window.location.origin, { withCredentials: true, transports: ['websocket', 'polling'] });
@@ -179,7 +180,7 @@
                         canvas.width = video.videoWidth;
                         canvas.height = video.videoHeight;
                         context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        const imageData = canvas.toDataURL('image/jpeg', 0.5);
+                        const imageData = canvas.toDataURL('image/jpeg', 0.4); // Reduced quality
                         socket.emit(eventName, imageData);
                         console.log(`Sent ${eventName} frame, size: ${imageData.length} bytes`);
                         retries = 5;
@@ -197,7 +198,7 @@
                 }
             };
             sendFrame();
-            frameInterval = setInterval(sendFrame, 2000);
+            frameInterval = setInterval(sendFrame, 3000); // Reduced frequency
         }
 
         if ('{{ mode }}' === 'camera') {
@@ -206,6 +207,48 @@
         } else {
             document.getElementById('startScreenShare').addEventListener('click', startScreenShare);
             document.getElementById('stopScreenShare').addEventListener('click', stopSharing);
+        }
+
+        function sendPrompt(prompt) {
+            if (isProcessing) return;
+            isProcessing = true;
+            console.log('Sending prompt:', prompt);
+            document.getElementById('status').innerText = 'Processing: ' + prompt;
+            fetch('/process_audio', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: prompt, mode: '{{ mode }}' }),
+                credentials: 'include'
+            })
+            .then(response => {
+                console.log('Fetch response:', response);
+                return response.json();
+            })
+            .then(data => {
+                console.log('Fetch data:', data);
+                if (data.error === 'Session recovered, please retry') {
+                    console.warn('Session recovered, retrying prompt');
+                    setTimeout(() => sendPrompt(prompt), 1000);
+                } else if (data.error) {
+                    document.getElementById('status').innerText = 'Error: ' + data.error;
+                    console.error('Process audio error:', data.error);
+                } else {
+                    const chatArea = document.getElementById('chatArea');
+                    const newChat = document.createElement('div');
+                    newChat.className = 'mb-2';
+                    newChat.innerHTML = `<p class="font-semibold text-blue-300">You: ${prompt}</p><p class="text-gray-200">AI: ${data.response}</p>`;
+                    chatArea.appendChild(newChat);
+                    chatArea.scrollTop = chatArea.scrollHeight;
+                    document.getElementById('status').innerText = 'Response received';
+                    speakResponse(data.response);
+                }
+                isProcessing = false;
+            })
+            .catch(err => {
+                console.error('Fetch error:', err);
+                document.getElementById('status').innerText = 'Fetch error: ' + err.message;
+                isProcessing = false;
+            });
         }
 
         function restartRecognition() {
@@ -239,52 +282,15 @@
             };
 
             recognition.onresult = (event) => {
-                if (isProcessing) return;
-                isProcessing = true;
                 const prompt = event.results[event.results.length - 1][0].transcript.trim();
                 console.log('Recognized prompt:', prompt);
-                if (!prompt) {
-                    isProcessing = false;
-                    return;
-                }
-                document.getElementById('status').innerText = 'Processing: ' + prompt;
-                fetch('/process_audio', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt: prompt, mode: '{{ mode }}' }),
-                    credentials: 'include'
-                })
-                .then(response => {
-                    console.log('Fetch response:', response);
-                    return response.json();
-                })
-                .then(data => {
-                    console.log('Fetch data:', data);
-                    if (data.error) {
-                        document.getElementById('status').innerText = 'Error: ' + data.error;
-                        console.error('Process audio error:', data.error);
-                    } else {
-                        const chatArea = document.getElementById('chatArea');
-                        const newChat = document.createElement('div');
-                        newChat.className = 'mb-2';
-                        newChat.innerHTML = `<p class="font-semibold text-blue-300">You: ${prompt}</p><p class="text-gray-200">AI: ${data.response}</p>`;
-                        chatArea.appendChild(newChat);
-                        chatArea.scrollTop = chatArea.scrollHeight;
-                        document.getElementById('status').innerText = 'Response received';
-                        speakResponse(data.response);
-                    }
-                    isProcessing = false;
-                })
-                .catch(err => {
-                    console.error('Fetch error:', err);
-                    document.getElementById('status').innerText = 'Fetch error: ' + err.message;
-                    isProcessing = false;
-                });
+                if (!prompt) return;
+                lastPrompt = prompt;
+                sendPrompt(prompt);
             };
 
             recognition.onerror = (event) => {
                 console.error('Speech error:', event.error);
-                isProcessing = false;
                 isRecognitionRunning = false;
                 document.getElementById('status').innerText = 'Speech error: ' + event.error;
             };
