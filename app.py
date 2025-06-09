@@ -228,7 +228,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
-socketio = SocketIO(app, max_http_buffer_size=1 * 1024 * 1024)  # Reduced buffer size
+socketio = SocketIO(app, max_http_buffer_size=512 * 1024)  # Further reduced buffer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -240,10 +240,10 @@ llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", convert_system_mes
 
 sessions = {}
 
-def capture_screen(scale_factor=0.2):
+def capture_screen(scale_factor=0.15):
     try:
         import pyautogui
-        pyautogui.FAILSAFE = False  # Disable failsafe to prevent crashes
+        pyautogui.FAILSAFE = False
         screenshot = pyautogui.screenshot()
         img = screenshot
         if scale_factor != 1.0:
@@ -251,7 +251,7 @@ def capture_screen(scale_factor=0.2):
             new_height = int(img.height * scale_factor)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         buffered = BytesIO()
-        img.save(buffered, format="JPEG", quality=40)
+        img.save(buffered, format="JPEG", quality=30)
         img_str = base64.b64encode(buffered.getvalue()).decode()
         logger.debug(f"Screen captured, size: {len(img_str)} bytes")
         return img_str
@@ -259,7 +259,7 @@ def capture_screen(scale_factor=0.2):
         logger.error(f"Screen capture error: {str(e)}")
         return None
 
-def process_frame(frame_data, scale_factor=0.2):
+def process_frame(frame_data, scale_factor=0.15):
     try:
         img_data = base64.b64decode(frame_data.split(",")[1])
         img = Image.open(BytesIO(img_data))
@@ -268,7 +268,7 @@ def process_frame(frame_data, scale_factor=0.2):
             new_height = int(img.height * scale_factor)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         buffered = BytesIO()
-        img.save(buffered, format="JPEG", quality=30)
+        img.save(buffered, format="JPEG", quality=20)
         img_str = base64.b64encode(buffered.getvalue()).decode()
         logger.debug(f"Camera frame processed, size: {len(img_str)} bytes")
         return img_str
@@ -296,9 +296,11 @@ def chat(mode):
 @app.route('/start_stream', methods=['POST'])
 def start_stream():
     session_id = session.get('session_id')
-    if not session_id or session_id not in sessions:
-        logger.error(f"Session {session_id} not found")
-        return jsonify({'error': 'Session not found'}), 400
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        session['session_id'] = session_id
+        sessions[session_id] = {'mode': None, 'responses': [], 'frame': None}
+        logger.info(f"New session {session_id} created")
 
     data = request.get_json()
     mode = data.get('mode')
@@ -317,14 +319,18 @@ def start_stream():
     else:
         logger.info("Camera stream started (client-side)")
     logger.info(f"Session {session_id} reset for mode: {mode}")
-    return jsonify({'status': 'Stream started', 'redirect': url_for('chat', mode=mode)})
+    return jsonify({'status': '', 'redirect': url_for('chat', mode=mode)})
 
 @app.route('/stop_stream', methods=['POST'])
 def stop_stream():
     session_id = session.get('session_id')
-    if not session_id or session_id not in sessions:
-        logger.error(f"Session {session_id} not found")
+    if not session_id:
+        logger.error("No session ID provided")
         return jsonify({'error': 'Session not found'}), 400
+    if session_id not in sessions:
+        logger.error(f"Session {session_id} not found")
+        sessions[session_id] = {'mode': None, 'responses': [], 'frame': None}
+        logger.info(f"Re-created session {session_id}")
 
     data = request.get_json()
     mode = data.get('mode')
@@ -372,9 +378,13 @@ def handle_camera_frame(frame_data):
 @app.route('/process_audio', methods=['POST'])
 def process_audio():
     session_id = session.get('session_id')
-    if not session_id or session_id not in sessions:
-        logger.error(f"Session {session_id} not found")
+    if not session_id:
+        logger.error("No session ID provided")
         return jsonify({'error': 'Session not found'}), 400
+    if session_id not in sessions:
+        logger.error(f"Session {session_id} not found")
+        sessions[session_id] = {'mode': None, 'responses': [], 'frame': None}
+        logger.info(f"Re-created session {session_id}")
 
     data = request.get_json()
     prompt = data.get('prompt')

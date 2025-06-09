@@ -1,1 +1,1 @@
-web: xvfb-run --server-args="-screen 0 1280x720x24" gunicorn --workers=1 --timeout=120 app:app
+web: xvfb-run --server-args="-screen 0 1024x768x24" gunicorn --workers=1 --timeout=180 --preload app:app
