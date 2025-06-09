@@ -84,6 +84,10 @@
             socket.on('connect', function() {
                 console.log('WebSocket connected');
             });
+            socket.on('connect_error', function(err) {
+                console.error('Socket.IO connection error:', err);
+                document.getElementById('status').innerText = 'WebSocket connection failed';
+            });
             video = document.getElementById('cameraFeed');
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
@@ -96,10 +100,10 @@
                             canvas.width = video.videoWidth;
                             canvas.height = video.videoHeight;
                             context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                            const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                            const imageData = canvas.toDataURL('image/jpeg', 0.5); // Lower quality
                             socket.emit('camera_frame', imageData);
                         }
-                    }, 1000);
+                    }, 2000); // Slower frame rate
                 })
                 .catch(err => {
                     document.getElementById('status').innerText = 'Failed to access webcam: ' + err.message;
@@ -156,9 +160,9 @@
                         isRecognitionRunning = true;
                         document.getElementById('status').innerText = 'Speech recognition restarted.';
                         console.log('Recognition started for mode:', '{{ mode }}');
-                    } catch (e) {
-                        document.getElementById('status').innerText = 'Failed to restart recognition: ' + e.message;
-                        console.error('Recognition start error:', e);
+                    } catch (err) {
+                        document.getElementById('status').innerText = 'Failed to restart recognition: ' + err.message;
+                        console.error('Recognition error:', err);
                     }
                 }
             }, 100);
@@ -245,9 +249,9 @@
             try {
                 recognition.start();
                 isRecognitionRunning = true;
-            } catch (e) {
-                document.getElementById('status').innerText = 'Failed to start recognition: ' + e.message;
-                console.error('Initial recognition start error:', e);
+            } catch (err) {
+                document.getElementById('status').innerText = 'Failed to start recognition: ' + err.message;
+                console.error('Initial recognition error:', err);
             }
         } else {
             document.getElementById('status').innerText = 'Speech recognition not supported. Use Chrome or Edge.';
