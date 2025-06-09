@@ -2,6 +2,7 @@ import os
 import uuid
 import base64
 import logging
+import time
 from PIL import Image
 from io import BytesIO
 from dotenv import load_dotenv
@@ -119,6 +120,7 @@ def start_stream():
 
     sessions[session_id]['responses'] = []
     sessions[session_id]['mode'] = mode
+    sessions[session_id]['frame'] = None  # Clear any old frame
     logger.info(f"Stream started for mode: {mode}, session_id: {session_id}")
     return jsonify({'status': 'Stream started', 'redirect': url_for('chat', mode=mode)})
 
@@ -134,15 +136,15 @@ def stop_stream():
     mode = data.get('mode')
     logger.info(f"Stop stream requested for mode: {mode}, session_id: {session_id}")
 
-    if sessions[session_id]['mode'] == mode:
+    if sessions[session_id].get('mode') == mode:
         sessions[session_id]['mode'] = None
         sessions[session_id]['responses'] = []
         sessions[session_id]['frame'] = None
         logger.info(f"Session {session_id} reset")
         return jsonify({'redirect': url_for('index')})
     else:
-        logger.error(f"Invalid mode for stop_stream: {mode}")
-        return jsonify({'error': 'Invalid mode'}), 400
+        logger.warning(f"Mode mismatch or session already reset for mode: {mode}")
+        return jsonify({'redirect': url_for('index')}), 200  # Allow redirect even if mode mismatch
 
 if socketio:
     @socketio.on('screen_frame')
@@ -189,9 +191,16 @@ def process_audio():
         return jsonify({'error': 'Stream not initialized'}), 400
 
     try:
-        frame = sessions[session_id]['frame']
+        # Wait briefly for a frame if none is available
+        max_wait = 2  # seconds
+        start_time = time.time()
+        while not sessions[session_id].get('frame') and time.time() - start_time < max_wait:
+            time.sleep(0.1)
+            logger.debug("Waiting for frame...")
+
+        frame = sessions[session_id].get('frame')
         if not frame:
-            logger.error(f"No frame available for mode: {mode}")
+            logger.error(f"No frame available for mode: {mode} after waiting")
             return jsonify({'error': 'No frame available. Please ensure screen/camera sharing is active.'}), 500
 
         system_prompt = SystemMessage(
