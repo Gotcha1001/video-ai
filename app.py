@@ -35,15 +35,17 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Session storage file (persistent disk)
-SESSION_FILE = '/data/sessions.pkl'
+# Session storage file
+SESSION_DIR = '/data' if os.access('/data', os.W_OK) else '/tmp'
+SESSION_FILE = os.path.join(SESSION_DIR, 'sessions.pkl')
+logger.info(f"Using session file: {SESSION_FILE}")
 
-# Ensure /data directory exists
-if not os.path.exists('/data'):
+# Ensure session directory exists
+if not os.path.exists(SESSION_DIR):
     try:
-        os.makedirs('/data')
+        os.makedirs(SESSION_DIR)
     except Exception as e:
-        logger.error(f"Failed to create /data directory: {e}")
+        logger.error(f"Failed to create {SESSION_DIR}: {e}")
 
 # Load or initialize sessions
 def load_sessions():
@@ -52,7 +54,7 @@ def load_sessions():
             with open(SESSION_FILE, 'rb') as f:
                 return pickle.load(f)
     except Exception as e:
-        logger.error(f"Failed to load sessions: {e}")
+        logger.error(f"Failed to load sessions from {SESSION_FILE}: {e}")
     return {}
 
 def save_sessions(sessions):
@@ -60,7 +62,7 @@ def save_sessions(sessions):
         with open(SESSION_FILE, 'wb') as f:
             pickle.dump(sessions, f)
     except Exception as e:
-        logger.error(f"Failed to save sessions: {e}")
+        logger.error(f"Failed to save sessions to {SESSION_FILE}: {e}")
 
 sessions = load_sessions()
 
@@ -89,7 +91,7 @@ if LANGCHAIN_AVAILABLE:
 else:
     llm = None
 
-def process_frame(frame_data, scale_factor=0.2):  # Reduced scale factor
+def process_frame(frame_data, scale_factor=0.2):
     try:
         if ',' in frame_data:
             img_data = base64.b64decode(frame_data.split(",")[1])
@@ -101,16 +103,13 @@ def process_frame(frame_data, scale_factor=0.2):  # Reduced scale factor
             new_height = int(img.height * scale_factor)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         buffered = BytesIO()
-        img.save(buffered, format="JPEG", quality=40)  # Reduced quality
+        img.save(buffered, format="JPEG", quality=40)
         img_str = base64.b64encode(buffered.getvalue()).decode()
         logger.debug(f"Frame processed, size: {len(img_str)} bytes")
         return img_str
     except Exception as e:
         logger.error(f"Frame processing error: {str(e)}")
         return None
-    finally:
-        # No img.close() needed for BytesIO
-        pass
 
 @app.route('/')
 def index():
@@ -125,6 +124,7 @@ def index():
 @app.route('/chat/<mode>')
 def chat(mode):
     session_id = session.get('session_id')
+    logger.info(f"Accessing chat for mode: {mode}, session_id: {session_id}")
     if not session_id or session_id not in sessions:
         logger.error(f"Session not found for session_id: {session_id}")
         return redirect(url_for('index'))
@@ -154,6 +154,7 @@ def start_stream():
 @app.route('/stop_stream', methods=['POST'])
 def stop_stream():
     session_id = session.get('session_id')
+    logger.info(f"Stopping stream for session_id: {session_id}")
     if not session_id or session_id not in sessions:
         logger.error(f"Session not found for session_id: {session_id}")
         return redirect(url_for('index')), 200
@@ -207,7 +208,7 @@ def process_audio():
     logger.info(f"Session ID: {session_id}")
     if not session_id or session_id not in sessions:
         logger.error(f"Session not found for session_id: {session_id}")
-        # Attempt to recover session
+        # Recover session
         sessions[session_id] = {'mode': 'camera', 'responses': [], 'frame': None}
         save_sessions(sessions)
         logger.info(f"Recovered session for session_id: {session_id}")
@@ -216,6 +217,7 @@ def process_audio():
     data = request.get_json()
     prompt = data.get('prompt')
     mode = data.get('mode')
+    logger.info(f"Processing prompt: {prompt}, mode: {mode}")
 
     if not prompt:
         logger.warning("No prompt provided")
@@ -225,7 +227,7 @@ def process_audio():
         return jsonify({'error': 'Stream not initialized'}), 400
 
     try:
-        # Wait for frame (optional for testing)
+        # Wait for frame (optional)
         max_wait = 5
         start_time = time.time()
         while not sessions[session_id].get('frame') and time.time() - start_time < max_wait:

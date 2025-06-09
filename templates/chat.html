@@ -61,16 +61,22 @@
             </div>
             {% endfor %}
         </div>
-        <div class="flex justify-center space-x-4 mb-4">
-            {% if mode == 'camera' %}
-                <button id="startCamera" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">Start Camera</button>
-                <button id="stopCamera" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded hidden">Stop Camera</button>
-            {% else %}
-                <button id="startScreenShare" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">Start Screen Share</button>
-                <button id="stopScreenShare" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded hidden">Stop Screen Share</button>
-            {% endif %}
-            <button id="stopButton" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded">Stop and Return</button>
-            <button onclick="restartRecognition()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Restart Speech</button>
+        <div class="flex flex-col space-y-4 mb-4">
+            <div class="flex justify-center space-x-4">
+                {% if mode == 'camera' %}
+                    <button id="startCamera" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">Start Camera</button>
+                    <button id="stopCamera" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded hidden">Stop Camera</button>
+                {% else %}
+                    <button id="startScreenShare" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">Start Screen Share</button>
+                    <button id="stopScreenShare" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded hidden">Stop Screen Share</button>
+                {% endif %}
+                <button id="stopButton" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded">Stop and Return</button>
+                <button onclick="restartRecognition()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Restart Speech</button>
+            </div>
+            <div class="flex justify-center space-x-4">
+                <input id="manualPrompt" type="text" placeholder="Enter prompt manually" class="p-2 rounded bg-gray-700 text-white">
+                <button onclick="sendManualPrompt()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Send Prompt</button>
+            </div>
         </div>
         <div id="status" class="mt-4 text-center text-yellow-300"></div>
     </div>
@@ -180,7 +186,7 @@
                         canvas.width = video.videoWidth;
                         canvas.height = video.videoHeight;
                         context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        const imageData = canvas.toDataURL('image/jpeg', 0.4); // Reduced quality
+                        const imageData = canvas.toDataURL('image/jpeg', 0.4);
                         socket.emit(eventName, imageData);
                         console.log(`Sent ${eventName} frame, size: ${imageData.length} bytes`);
                         retries = 5;
@@ -198,7 +204,7 @@
                 }
             };
             sendFrame();
-            frameInterval = setInterval(sendFrame, 3000); // Reduced frequency
+            frameInterval = setInterval(sendFrame, 3000);
         }
 
         if ('{{ mode }}' === 'camera') {
@@ -251,6 +257,14 @@
             });
         }
 
+        function sendManualPrompt() {
+            const prompt = document.getElementById('manualPrompt').value.trim();
+            if (prompt) {
+                sendPrompt(prompt);
+                document.getElementById('manualPrompt').value = '';
+            }
+        }
+
         function restartRecognition() {
             if (recognition && isRecognitionRunning) {
                 recognition.stop();
@@ -278,6 +292,7 @@
 
             recognition.onstart = () => {
                 isRecognitionRunning = true;
+                console.log('Speech recognition started');
                 document.getElementById('status').innerText = 'Listening...';
             };
 
@@ -297,6 +312,7 @@
 
             recognition.onend = () => {
                 isRecognitionRunning = false;
+                console.log('Speech recognition ended, restarting...');
                 setTimeout(() => {
                     if (!isRecognitionRunning) {
                         try {
@@ -315,6 +331,7 @@
                     try {
                         recognition.start();
                         isRecognitionRunning = true;
+                        console.log('Speech recognition started on video play');
                         document.getElementById('status').innerText = 'Speech recognition started';
                     } catch (err) {
                         console.error('Recognition error:', err);
@@ -323,6 +340,7 @@
                 }
             });
         } else {
+            console.error('Speech recognition not supported');
             document.getElementById('status').innerText = 'Speech recognition not supported. Use Chrome/Edge.';
         }
 
