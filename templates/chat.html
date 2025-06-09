@@ -177,7 +177,7 @@
         }
 
         function startFrameCapture(eventName) {
-            frameInterval = setInterval(() => {
+            const sendFrame = () => {
                 if (video.videoWidth && video.videoHeight) {
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
@@ -185,7 +185,9 @@
                     const imageData = canvas.toDataURL('image/jpeg', 0.7);
                     socket.emit(eventName, imageData);
                 }
-            }, 1000); // Send frame every second
+            };
+            sendFrame(); // Send the first frame immediately
+            frameInterval = setInterval(sendFrame, 1000); // Then send every second
         }
 
         // Event listeners

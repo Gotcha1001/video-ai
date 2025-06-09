@@ -10,7 +10,6 @@ from flask import Flask, render_template, request, jsonify, Response, redirect, 
 # Try to import SocketIO with error handling
 try:
     from flask_socketio import SocketIO
-
     SOCKETIO_AVAILABLE = True
 except ImportError as e:
     print(f"SocketIO import error: {e}")
@@ -21,7 +20,6 @@ except ImportError as e:
 try:
     from langchain_core.messages import SystemMessage, HumanMessage
     from langchain_google_genai import ChatGoogleGenerativeAI
-
     LANGCHAIN_AVAILABLE = True
 except ImportError as e:
     print(f"LangChain import error: {e}")
@@ -67,7 +65,6 @@ if LANGCHAIN_AVAILABLE:
 else:
     llm = None
 
-
 def process_frame(frame_data, scale_factor=0.5):
     """Process a base64-encoded frame, resize it, and return it as a base64-encoded string."""
     try:
@@ -91,7 +88,6 @@ def process_frame(frame_data, scale_factor=0.5):
         logger.error(f"Frame processing error: {str(e)}")
         return None
 
-
 @app.route('/')
 def index():
     """Render the index page."""
@@ -102,7 +98,6 @@ def index():
     logger.info(f"Session {session_id} initialized")
     return render_template('index.html')
 
-
 @app.route('/chat/<mode>')
 def chat(mode):
     """Render the chat page for the specified mode."""
@@ -110,7 +105,6 @@ def chat(mode):
     if not session_id or session_id not in sessions:
         return redirect(url_for('index'))
     return render_template('chat.html', mode=mode, responses=sessions[session_id]['responses'])
-
 
 @app.route('/start_stream', methods=['POST'])
 def start_stream():
@@ -129,7 +123,6 @@ def start_stream():
     sessions[session_id]['mode'] = mode
     logger.info(f"Stream started for mode: {mode}")
     return jsonify({'status': 'Stream started', 'redirect': url_for('chat', mode=mode)})
-
 
 @app.route('/stop_stream', methods=['POST'])
 def stop_stream():
@@ -151,7 +144,6 @@ def stop_stream():
     else:
         return jsonify({'error': 'Invalid mode'}), 400
 
-
 # SocketIO event handlers (only if SocketIO is available)
 if socketio:
     @socketio.on('screen_frame')
@@ -162,8 +154,7 @@ if socketio:
             processed_frame = process_frame(frame_data)
             if processed_frame:
                 sessions[session_id]['frame'] = processed_frame
-                logger.debug("Desktop screen frame updated from client")
-
+                logger.info(f"Desktop screen frame updated, size: {len(processed_frame)} bytes")
 
     @socketio.on('camera_frame')
     def handle_camera_frame(frame_data):
@@ -173,26 +164,32 @@ if socketio:
             processed_frame = process_frame(frame_data)
             if processed_frame:
                 sessions[session_id]['frame'] = processed_frame
-                logger.debug("Camera frame updated from client")
-
+                logger.info(f"Camera frame updated, size: {len(processed_frame)} bytes")
 
 @app.route('/process_audio', methods=['POST'])
 def process_audio():
     """Process audio input and generate a response."""
+    logger.info("Received /process_audio request")
     if not llm:
+        logger.error("AI model not available. Please check your configuration.")
         return jsonify({'error': 'AI model not available. Please check your configuration.'}), 500
 
     session_id = session.get('session_id')
     if not session_id or session_id not in sessions:
+        logger.error(f"Session not found for session_id: {session_id}")
         return jsonify({'error': 'Session not found'}), 400
 
     data = request.get_json()
     prompt = data.get('prompt')
     mode = data.get('mode')
 
+    logger.info(f"Received prompt: {prompt}, mode: {mode}")
+
     if not prompt:
+        logger.warning("No prompt provided in the request.")
         return jsonify({'error': 'No prompt provided'}), 400
     if sessions[session_id]['mode'] != mode:
+        logger.error(f"Stream not initialized for mode: {mode}")
         return jsonify({'error': 'Stream not initialized'}), 400
 
     try:
@@ -200,6 +197,8 @@ def process_audio():
         if not frame:
             logger.error(f"No frame available for mode: {mode}")
             return jsonify({'error': 'No frame available. Please ensure screen/camera sharing is active.'}), 500
+
+        logger.info(f"Frame available, size: {len(frame)} bytes")
 
         system_prompt = SystemMessage(
             content="You are a helpful AI assistant analyzing images and responding to user prompts. You can see what the user is showing you through their screen or camera.")
@@ -211,12 +210,11 @@ def process_audio():
         response = llm.invoke([system_prompt, user_prompt])
         response_text = response.content if hasattr(response, 'content') else str(response)
         sessions[session_id]['responses'].append({'prompt': prompt, 'response': response_text})
-        logger.info(f"LLM response generated successfully")
+        logger.info(f"LLM response generated: {response_text}")
         return jsonify({'response': response_text})
     except Exception as e:
-        logger.error(f"Assistant error in process_audio: {str(e)}", exc_info=True)
+        logger.error(f"Error in process_audio: {str(e)}", exc_info=True)
         return jsonify({'error': f"Failed to process audio: {str(e)}"}), 500
-
 
 # Health check endpoint
 @app.route('/health')
@@ -227,7 +225,6 @@ def health_check():
         'langchain_available': LANGCHAIN_AVAILABLE,
         'google_api_key_set': bool(os.getenv("GOOGLE_API_KEY"))
     }), 200
-
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
