@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Assistant Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.min.js"></script>
+    <style>
+        .gradient-background {
+            background: linear-gradient(300deg, #4B0082, #6A0DAD, #E6E6FA);
+            background-size: 180% 180%;
+            animation: gradient-animation 6s ease infinite;
+        }
+        @keyframes gradient-animation {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+    </style>
+</head>
+<body class="gradient-background min-h-screen flex flex-col items-center justify-center text-white p-4">
+    <div class="w-full max-w-4xl p-6 rounded-lg shadow-lg bg-gray-800 bg-opacity-50">
+        <h1 class="text-3xl font-bold mb-4 text-center">AI Assistant - {{ mode | capitalize }} Mode</h1>
+        <div class="mb-6">
+            {% if mode == 'desktop' %}
+                <img id="desktopFeed" src="{{ url_for('video_feed', mode=mode) }}" alt="{{ mode }} Feed" class="w-full max-h-96 object-contain rounded-lg">
+            {% else %}
+                <video id="cameraFeed" autoplay playsinline class="w-full max-h-96 object-contain rounded-lg"></video>
+            {% endif %}
+        </div>
+        <div id="chatArea" class="h-64 overflow-y-auto p-4 bg-gray-900 bg-opacity-70 rounded-lg mb-4">
+            {% for item in responses %}
+                <div class="mb-2">
+                    <p class="font-semibold text-purple-300">You: {{ item.prompt }}</p>
+                    <p class="text-gray-200">AI: {{ item.response }}</p>
+                </div>
+            {% endfor %}
+        </div>
+        <div class="flex justify-center space-x-4">
+            <button id="stopButton" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded transition duration-300">Stop and Return</button>
+            <button onclick="restartRecognition()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition duration-300">Restart Speech</button>
+        </div>
+        <div id="status" class="mt-4 text-center"></div>
+    </div>
+    <script>
+        let recognition;
+        let isProcessing = false;
+        let isRecognitionRunning = false;
+        let socket;
+        let video;
+        // Initialize Web Speech API for TTS
+        function speakResponse(text) {
+            if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'en-US';
+                // Try to select a male voice
+                const voices = window.speechSynthesis.getVoices();
+                let maleVoice = voices.find(voice =>
+                    voice.name.includes('Male') ||
+                    voice.name.includes('David') ||
+                    voice.name.includes('Mark') ||
+                    voice.name.includes('Guy')
+                );
+                if (!maleVoice) {
+                    // Fallback to first available voice
+                    maleVoice = voices[0];
+                }
+                utterance.voice = maleVoice;
+                utterance.rate = 1.0; // Normal speed
+                utterance.volume = 0.8; // 80% volume
+                window.speechSynthesis.speak(utterance);
+            } else {
+                console.warn('Web Speech API not supported in this browser');
+                document.getElementById('status').innerText = 'Text-to-speech not supported in this browser';
+            }
+        }
+        // Load voices on page load (some browsers need this)
+        window.speechSynthesis.onvoiceschanged = () => {
+            console.log('Voices loaded:', window.speechSynthesis.getVoices());
+        };
+        if ('{{ mode }}' === 'camera') {
+            socket = io.connect(window.location.origin);
+            socket.on('connect', function() {
+                console.log('WebSocket connected');
+            });
+            video = document.getElementById('cameraFeed');
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    video.srcObject = stream;
+                    video.play();
+                    setInterval(() => {
+                        if (video.videoWidth && video.videoHeight) {
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
+                            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                            const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                            socket.emit('camera_frame', imageData);
+                        }
+                    }, 1000);
+                })
+                .catch(err => {
+                    document.getElementById('status').innerText = 'Failed to access webcam: ' + err.message;
+                    console.error('Webcam access error:', err);
+                });
+        } else {
+            video = document.getElementById('desktopFeed');
+        }
+        function startStream(mode) {
+            fetch('/start_stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: mode })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    document.getElementById('status').innerText = 'Failed to restart stream: ' + data.error;
+                } else {
+                    document.getElementById('status').innerText = 'Stream restarted';
+                    if (mode === 'desktop') {
+                        document.getElementById('desktopFeed').src = "{{ url_for('video_feed', mode=mode) }}";
+                    }
+                }
+            })
+            .catch(err => {
+                document.getElementById('status').innerText = 'Error restarting stream: ' + err.message;
+            });
+        }
+        function checkMicrophonePermission() {
+            navigator.permissions.query({ name: 'microphone' })
+                .then(permissionStatus => {
+                    console.log('Microphone permission:', permissionStatus.state);
+                    if (permissionStatus.state === 'denied') {
+                        document.getElementById('status').innerText = 'Microphone access denied. Please allow microphone in browser settings.';
+                    } else if (permissionStatus.state === 'prompt') {
+                        document.getElementById('status').innerText = 'Please grant microphone access when prompted.';
+                    }
+                })
+                .catch(err => {
+                    console.error('Permission query error:', err);
+                    document.getElementById('status').innerText = 'Error checking microphone permission.';
+                });
+        }
+        function restartRecognition() {
+            if (recognition && isRecognitionRunning) {
+                recognition.stop();
+                isRecognitionRunning = false;
+            }
+            setTimeout(() => {
+                if (!isRecognitionRunning && document.activeMode) {
+                    try {
+                        recognition.start();
+                        isRecognitionRunning = true;
+                        document.getElementById('status').innerText = 'Speech recognition restarted.';
+                        console.log('Recognition started for mode:', '{{ mode }}');
+                    } catch (e) {
+                        document.getElementById('status').innerText = 'Failed to restart recognition: ' + e.message;
+                        console.error('Recognition start error:', e);
+                    }
+                }
+            }, 100);
+        }
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+            recognition.onstart = function() {
+                isRecognitionRunning = true;
+                document.getElementById('status').innerText = 'Listening for speech...';
+                console.log('Speech recognition started.');
+            };
+            recognition.onresult = function(event) {
+                if (isProcessing) return;
+                isProcessing = true;
+                const prompt = event.results[event.results.length - 1][0].transcript.trim();
+                console.log('Recognized prompt:', prompt);
+                if (!prompt) {
+                    document.getElementById('status').innerText = 'Empty prompt detected.';
+                    isProcessing = false;
+                    return;
+                }
+                document.getElementById('status').innerText = 'Processing: ' + prompt;
+                fetch('/process_audio', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: prompt, mode: '{{ mode }}' })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('status').innerText = data.error;
+                        if (data.error === 'Stream not initialized') {
+                            startStream('{{ mode }}');
+                        }
+                    } else {
+                        const chatArea = document.getElementById('chatArea');
+                        const newChat = document.createElement('div');
+                        newChat.className = 'mb-2';
+                        newChat.innerHTML = `<p class="font-semibold text-purple-300">You: ${prompt}</p><p class="text-gray-200">AI: ${data.response}</p>`;
+                        chatArea.appendChild(newChat);
+                        chatArea.scrollTop = chatArea.scrollHeight;
+                        document.getElementById('status').innerText = '';
+                        // Speak the response using Web Speech API
+                        speakResponse(data.response);
+                    }
+                    isProcessing = false;
+                })
+                .catch(err => {
+                    document.getElementById('status').innerText = 'Error processing audio: ' + err.message;
+                    console.error('Process audio error:', err);
+                    isProcessing = false;
+                });
+            };
+            recognition.onerror = function(event) {
+                document.getElementById('status').innerText = 'Speech recognition error: ' + event.error;
+                console.error('Speech recognition error:', event.error);
+                isProcessing = false;
+                isRecognitionRunning = false;
+                if (event.error === 'no-speech') {
+                    document.getElementById('status').innerText = 'No speech detected. Please speak clearly or check microphone.';
+                } else if (event.error === 'audio-capture') {
+                    document.getElementById('status').innerText = 'Microphone error. Check if microphone is connected and not muted.';
+                }
+                if (document.activeMode) {
+                    restartRecognition();
+                }
+            };
+            recognition.onend = function() {
+                isRecognitionRunning = false;
+                console.log('Speech recognition ended.');
+                if (document.activeMode) {
+                    restartRecognition();
+                }
+            };
+            checkMicrophonePermission();
+            try {
+                recognition.start();
+                isRecognitionRunning = true;
+            } catch (e) {
+                document.getElementById('status').innerText = 'Failed to start recognition: ' + e.message;
+                console.error('Initial recognition start error:', e);
+            }
+        } else {
+            document.getElementById('status').innerText = 'Speech recognition not supported. Use Chrome or Edge.';
+        }
+        function stopStream(mode) {
+            console.log('Stop stream called for mode:', mode);
+            document.activeMode = null;
+            // Cancel ongoing TTS
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                console.log('TTS cancelled');
+            }
+            if (recognition && isRecognitionRunning) {
+                recognition.stop();
+                isRecognitionRunning = false;
+                console.log('Speech recognition stopped');
+            }
+            if (mode === 'camera' && video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+                console.log('Camera stream stopped');
+            }
+            fetch('/stop_stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: mode })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Stop stream response:', data);
+                if (data.redirect) {
+                    console.log('Redirecting to:', data.redirect);
+                    window.location.href = data.redirect;
+                } else {
+                    document.getElementById('status').innerText = 'Stream stopped, but no redirect provided';
+                    console.warn('No redirect in response:', data);
+                }
+            })
+            .catch(err => {
+                document.getElementById('status').innerText = 'Error stopping stream: ' + err.message;
+                console.error('Stop stream error:', err);
+            });
+        }
+        document.getElementById('stopButton').addEventListener('click', () => {
+            stopStream('{{ mode }}');
+        });
+        document.activeMode = '{{ mode }}';
+    </script>
+</body>
+</html>
