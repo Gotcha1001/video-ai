@@ -4,9 +4,11 @@ services:
     env: python
     plan: free
     buildCommand: apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 xvfb && pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: xvfb-run --auto-servernum gunicorn app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.12
       - key: GOOGLE_API_KEY
         sync: false
+      - key: DISPLAY
+        value: :99

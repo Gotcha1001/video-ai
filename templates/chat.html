@@ -49,12 +49,11 @@
         let isRecognitionRunning = false;
         let socket;
         let video;
-        // Initialize Web Speech API for TTS
+
         function speakResponse(text) {
             if ('speechSynthesis' in window) {
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.lang = 'en-US';
-                // Try to select a male voice
                 const voices = window.speechSynthesis.getVoices();
                 let maleVoice = voices.find(voice =>
                     voice.name.includes('Male') ||
@@ -63,22 +62,22 @@
                     voice.name.includes('Guy')
                 );
                 if (!maleVoice) {
-                    // Fallback to first available voice
                     maleVoice = voices[0];
                 }
                 utterance.voice = maleVoice;
-                utterance.rate = 1.0; // Normal speed
-                utterance.volume = 0.8; // 80% volume
+                utterance.rate = 1.0;
+                utterance.volume = 0.8;
                 window.speechSynthesis.speak(utterance);
             } else {
-                console.warn('Web Speech API not supported in this browser');
-                document.getElementById('status').innerText = 'Text-to-speech not supported in this browser';
+                console.warn('Web Speech API not supported');
+                document.getElementById('status').innerText = 'Text-to-speech not supported';
             }
         }
-        // Load voices on page load (some browsers need this)
+
         window.speechSynthesis.onvoiceschanged = () => {
             console.log('Voices loaded:', window.speechSynthesis.getVoices());
         };
+
         if ('{{ mode }}' === 'camera') {
             socket = io.connect(window.location.origin);
             socket.on('connect', function() {
@@ -100,10 +99,10 @@
                             canvas.width = video.videoWidth;
                             canvas.height = video.videoHeight;
                             context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                            const imageData = canvas.toDataURL('image/jpeg', 0.5); // Lower quality
+                            const imageData = canvas.toDataURL('image/jpeg', 0.5);
                             socket.emit('camera_frame', imageData);
                         }
-                    }, 2000); // Slower frame rate
+                    }, 2000);
                 })
                 .catch(err => {
                     document.getElementById('status').innerText = 'Failed to access webcam: ' + err.message;
@@ -112,8 +111,9 @@
         } else {
             video = document.getElementById('desktopFeed');
         }
+
         function startStream(mode) {
-            fetch('/start_stream', {
+            return fetch('/start_stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ mode: mode })
@@ -122,25 +122,33 @@
             .then(data => {
                 if (data.error) {
                     document.getElementById('status').innerText = 'Failed to restart stream: ' + data.error;
+                    if (data.error === 'Session not found') {
+                        setTimeout(() => window.location.href = '/', 1000); // Redirect to index
+                    }
+                    throw new Error(data.error);
                 } else {
                     document.getElementById('status').innerText = 'Stream restarted';
                     if (mode === 'desktop') {
                         document.getElementById('desktopFeed').src = "{{ url_for('video_feed', mode=mode) }}";
                     }
+                    return data;
                 }
             })
             .catch(err => {
                 document.getElementById('status').innerText = 'Error restarting stream: ' + err.message;
+                console.error('Start stream error:', err);
+                throw err;
             });
         }
+
         function checkMicrophonePermission() {
             navigator.permissions.query({ name: 'microphone' })
                 .then(permissionStatus => {
                     console.log('Microphone permission:', permissionStatus.state);
                     if (permissionStatus.state === 'denied') {
-                        document.getElementById('status').innerText = 'Microphone access denied. Please allow microphone in browser settings.';
+                        document.getElementById('status').innerText = 'Microphone access denied. Please allow microphone.';
                     } else if (permissionStatus.state === 'prompt') {
-                        document.getElementById('status').innerText = 'Please grant microphone access when prompted.';
+                        document.getElementById('status').innerText = 'Please grant microphone access.';
                     }
                 })
                 .catch(err => {
@@ -148,6 +156,7 @@
                     document.getElementById('status').innerText = 'Error checking microphone permission.';
                 });
         }
+
         function restartRecognition() {
             if (recognition && isRecognitionRunning) {
                 recognition.stop();
@@ -167,6 +176,7 @@
                 }
             }, 100);
         }
+
         if ('webkitSpeechRecognition' in window) {
             recognition = new webkitSpeechRecognition();
             recognition.continuous = true;
@@ -202,7 +212,9 @@
                 .then(data => {
                     if (data.error) {
                         document.getElementById('status').innerText = data.error;
-                        if (data.error === 'Stream not initialized') {
+                        if (data.error === 'Session not found') {
+                            setTimeout(() => window.location.href = '/', 1000);
+                        } else if (data.error === 'Stream not initialized') {
                             startStream('{{ mode }}');
                         }
                     } else {
@@ -213,7 +225,6 @@
                         chatArea.appendChild(newChat);
                         chatArea.scrollTop = chatArea.scrollHeight;
                         document.getElementById('status').innerText = '';
-                        // Speak the response using Web Speech API
                         speakResponse(data.response);
                     }
                     isProcessing = false;
@@ -230,9 +241,9 @@
                 isProcessing = false;
                 isRecognitionRunning = false;
                 if (event.error === 'no-speech') {
-                    document.getElementById('status').innerText = 'No speech detected. Please speak clearly or check microphone.';
+                    document.getElementById('status').innerText = 'No speech detected. Please speak clearly.';
                 } else if (event.error === 'audio-capture') {
-                    document.getElementById('status').innerText = 'Microphone error. Check if microphone is connected and not muted.';
+                    document.getElementById('status').innerText = 'Microphone error. Check microphone.';
                 }
                 if (document.activeMode) {
                     restartRecognition();
@@ -256,10 +267,10 @@
         } else {
             document.getElementById('status').innerText = 'Speech recognition not supported. Use Chrome or Edge.';
         }
+
         function stopStream(mode) {
             console.log('Stop stream called for mode:', mode);
             document.activeMode = null;
-            // Cancel ongoing TTS
             if ('speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 console.log('TTS cancelled');
@@ -297,8 +308,12 @@
             .catch(err => {
                 document.getElementById('status').innerText = 'Error stopping stream: ' + err.message;
                 console.error('Stop stream error:', err);
+                if (err.message.includes('Session not found')) {
+                    setTimeout(() => window.location.href = '/', 1000);
+                }
             });
         }
+
         document.getElementById('stopButton').addEventListener('click', () => {
             stopStream('{{ mode }}');
         });

@@ -229,34 +229,29 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
-socketio = SocketIO(app, max_http_buffer_size=2 * 1024 * 1024)  # Increase buffer for camera frames
+socketio = SocketIO(app, max_http_buffer_size=2 * 1024 * 1024)
 
-# Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Load environment variables
 load_dotenv()
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
-# Initialize the Gemini model
 llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", convert_system_message_to_human=True)
 
-# Global variables
 sessions = {}
 
-def capture_screen(scale_factor=0.5):
-    """Capture the screen, resize it, and return it as a base64-encoded string."""
+def capture_screen(scale_factor=0.25):  # Reduced scale_factor
     try:
         import pyautogui
         screenshot = pyautogui.screenshot()
-        img = screenshot  # screenshot is already a PIL.Image
+        img = screenshot
         if scale_factor != 1.0:
             new_width = int(img.width * scale_factor)
             new_height = int(img.height * scale_factor)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         buffered = BytesIO()
-        img.save(buffered, format="JPEG", quality=70)
+        img.save(buffered, format="JPEG", quality=50)  # Lower quality
         img_str = base64.b64encode(buffered.getvalue()).decode()
         logger.debug(f"Screen captured successfully, size: {len(img_str)} bytes")
         return img_str
@@ -264,8 +259,7 @@ def capture_screen(scale_factor=0.5):
         logger.error(f"Screen capture error: {str(e)}")
         return None
 
-def process_frame(frame_data, scale_factor=0.5):
-    """Process a base64-encoded frame, resize it, and return it as a base64-encoded string."""
+def process_frame(frame_data, scale_factor=0.25):
     try:
         img_data = base64.b64decode(frame_data.split(",")[1])
         img = Image.open(BytesIO(img_data))
@@ -274,7 +268,7 @@ def process_frame(frame_data, scale_factor=0.5):
             new_height = int(img.height * scale_factor)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         buffered = BytesIO()
-        img.save(buffered, format="JPEG", quality=50)  # Lower quality for smaller payload
+        img.save(buffered, format="JPEG", quality=40)  # Further reduced quality
         img_str = base64.b64encode(buffered.getvalue()).decode()
         logger.debug(f"Camera frame processed successfully, size: {len(img_str)} bytes")
         return img_str
@@ -284,7 +278,6 @@ def process_frame(frame_data, scale_factor=0.5):
 
 @app.route('/')
 def index():
-    """Render the index page."""
     session_id = session.get('session_id', str(uuid.uuid4()))
     session['session_id'] = session_id
     if session_id not in sessions:
@@ -294,17 +287,17 @@ def index():
 
 @app.route('/chat/<mode>')
 def chat(mode):
-    """Render the chat page for the specified mode."""
     session_id = session.get('session_id')
     if not session_id or session_id not in sessions:
+        logger.warning(f"Session not found for {session_id}, redirecting to index")
         return redirect(url_for('index'))
     return render_template('chat.html', mode=mode, responses=sessions[session_id]['responses'])
 
 @app.route('/start_stream', methods=['POST'])
 def start_stream():
-    """Start the video stream for the specified mode."""
     session_id = session.get('session_id')
     if not session_id or session_id not in sessions:
+        logger.error(f"Session not found for {session_id}")
         return jsonify({'error': 'Session not found'}), 400
 
     data = request.get_json()
@@ -312,11 +305,13 @@ def start_stream():
     if mode not in ['desktop', 'camera']:
         return jsonify({'error': 'Invalid mode'}), 400
 
-    # Reset responses to clear LLM history
     sessions[session_id]['responses'] = []
     sessions[session_id]['mode'] = mode
     if mode == 'desktop':
         sessions[session_id]['frame'] = capture_screen()
+        if not sessions[session_id]['frame']:
+            logger.error("Failed to capture initial desktop frame")
+            return jsonify({'error': 'Failed to initialize desktop stream'}), 500
         logger.info("Desktop stream started")
     else:
         logger.info("Camera stream started (client-side)")
@@ -325,16 +320,15 @@ def start_stream():
 
 @app.route('/stop_stream', methods=['POST'])
 def stop_stream():
-    """Stop the video stream for the specified mode."""
     session_id = session.get('session_id')
     if not session_id or session_id not in sessions:
+        logger.error(f"Session not found for {session_id}")
         return jsonify({'error': 'Session not found'}), 400
 
     data = request.get_json()
     mode = data.get('mode')
     logger.info(f"Stop stream requested for mode: {mode}")
 
-    # Always reset session, even if mode doesn't match
     sessions[session_id]['frame'] = None
     sessions[session_id]['mode'] = None
     sessions[session_id]['responses'] = []
@@ -343,13 +337,13 @@ def stop_stream():
 
 @app.route('/video_feed/<mode>')
 def video_feed(mode):
-    """Stream video feed for the specified mode."""
     session_id = session.get('session_id')
     if not session_id or session_id not in sessions or sessions[session_id]['mode'] != mode:
+        logger.error(f"Stream not initialized for mode {mode}, session {session_id}")
         return Response("Stream not initialized", status=400)
 
     def generate():
-        while sessions[session_id]['mode'] == mode:
+        while session_id in sessions and sessions[session_id]['mode'] == mode:
             if mode == 'desktop':
                 frame = capture_screen()
                 if frame:
@@ -367,7 +361,6 @@ def video_feed(mode):
 
 @socketio.on('camera_frame')
 def handle_camera_frame(frame_data):
-    """Handle camera frame updates from the client."""
     session_id = session.get('session_id')
     if session_id and session_id in sessions and sessions[session_id]['mode'] == 'camera':
         processed_frame = process_frame(frame_data)
@@ -377,9 +370,9 @@ def handle_camera_frame(frame_data):
 
 @app.route('/process_audio', methods=['POST'])
 def process_audio():
-    """Process audio input and generate a response."""
     session_id = session.get('session_id')
     if not session_id or session_id not in sessions:
+        logger.error(f"Session not found for {session_id}")
         return jsonify({'error': 'Session not found'}), 400
 
     data = request.get_json()
@@ -389,6 +382,7 @@ def process_audio():
     if not prompt:
         return jsonify({'error': 'No prompt provided'}), 400
     if sessions[session_id]['mode'] != mode:
+        logger.error(f"Stream not initialized for mode {mode}, session {session_id}")
         return jsonify({'error': 'Stream not initialized'}), 400
 
     try:
