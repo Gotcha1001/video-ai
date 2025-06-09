@@ -1,1 +1,1 @@
-web: XAUTHORITY=/tmp/.Xauthority xvfb-run --server-args="-screen 0 800x600x16" gunicorn --workers=1 --timeout=300 --preload --max-requests=100 app:app
+web: gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT app:app
