@@ -214,33 +214,21 @@ def process_audio():
         return jsonify({'error': 'Stream not initialized'}), 400
 
     try:
-        max_wait = 5
-        start_time = time.time()
-        while not sessions[session_id].get('frame') and time.time() - start_time < max_wait:
-            time.sleep(0.1)
-            logger.debug("Waiting for frame...")
-
-        frame = sessions[session_id].get('frame')
-        if not frame:
-            logger.error(f"No frame available for mode: {mode}")
-            return jsonify({'response': "I can't see anything. Please ensure screen or camera sharing is active."}), 200
-
-        system_prompt = SystemMessage(content="You are a helpful AI assistant analyzing images and responding to user prompts.")
-        user_prompt = HumanMessage(content=[
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": f"data:image/jpeg;base64,{frame}"}
-        ])
-        logger.debug(f"Invoking LLM with prompt: {prompt}, frame size: {len(frame)} bytes")
+        # For testing: Skip frame requirement
+        logger.debug(f"Processing prompt without frame: {prompt}")
+        system_prompt = SystemMessage(content="You are a helpful AI assistant responding to user prompts.")
+        user_prompt = HumanMessage(content=[{"type": "text", "text": prompt}])
+        logger.debug(f"Invoking LLM with prompt: {prompt}")
         response = llm.invoke([system_prompt, user_prompt])
         response_text = response.content if hasattr(response, 'content') else str(response)
         sessions[session_id]['responses'].append({'prompt': prompt, 'response': response_text})
         save_sessions(sessions)
-        logger.info(f"LLM response generated")
+        logger.info(f"LLM response generated: {response_text}")
         log_memory_usage()
         return jsonify({'response': response_text})
     except Exception as e:
-        logger.error(f"Assistant error: {str(e)}", exc_info=True)
-        return jsonify({'error': f"Failed to process audio: {str(e)}"}), 500
+        logger.error(f"LLM error: {str(e)}", exc_info=True)
+        return jsonify({'error': f"Failed to process prompt: {str(e)}"}), 500
 
 @app.route('/health')
 def health_check():
