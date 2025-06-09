@@ -246,7 +246,7 @@ def capture_screen(scale_factor=0.1):
         import pyautogui
         pyautogui.FAILSAFE = False
         screenshot = pyautogui.screenshot()
-        img = Image.frombytes('RGB', screenshot.size, screenshot.rgb)
+        img = screenshot  # screenshot is already a PIL.Image.Image
         if scale_factor != 1.0:
             new_width = int(img.width * scale_factor)
             new_height = int(img.height * scale_factor)
@@ -401,6 +401,7 @@ def process_audio():
 
     try:
         frame = sessions[session_id]['frame']
+        logger.debug(f"Session {session_id} frame exists: {bool(frame)}")
         if not frame:
             logger.error(f"No frame available for mode: {mode}")
             if mode == 'camera':
