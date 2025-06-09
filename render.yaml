@@ -3,15 +3,25 @@ services:
     name: video-ai-app
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
-    plan: starter
+    startCommand: gunicorn app:app
+    plan: free
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.4
+        value: 3.11.7
       - key: FLASK_ENV
         value: production
+      - key: RENDER
+        value: True
       - key: WEB_CONCURRENCY
-        value: 1
-      - key: GUNICORN_CMD_ARGS
-        value: "--timeout 120 --keep-alive 5 --max-requests 100 --max-requests-jitter 10"
+        value: 2
+      - key: SECRET_KEY
+        generateValue: True
+      - key: GOOGLE_API_KEY
+        value: AIzaSyBHa6AQZnRgYF4PyBf95u97g7mKVooQZnU
+      - key: GUNICORN_TIMEOUT
+        value: 120
+    disk:
+      name: video-ai-disk
+      mountPath: /tmp
+      sizeGB: 1

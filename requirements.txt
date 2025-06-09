@@ -9,3 +9,4 @@ eventlet==0.33.3
 gunicorn==21.2.0
 langchain==0.2.16
 langchain-community==0.2.16
+psutil==6.1.1

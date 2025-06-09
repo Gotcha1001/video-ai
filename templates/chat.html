@@ -87,19 +87,27 @@
         let frameInterval;
 
         // Initialize socket connection with credentials
-        socket = io.connect(window.location.origin, { withCredentials: true });
-        socket.on('connect', () => {
-            console.log('WebSocket connected');
-            document.getElementById('status').innerText = 'WebSocket connected';
-        });
-        socket.on('disconnect', () => {
-            console.log('WebSocket disconnected');
-            document.getElementById('status').innerText = 'WebSocket disconnected';
-        });
-        socket.on('connect_error', (error) => {
-            console.error('WebSocket connection error:', error);
-            document.getElementById('status').innerText = 'WebSocket connection error: ' + error.message;
-        });
+        function initSocket() {
+            socket = io.connect(window.location.origin, { withCredentials: true, transports: ['websocket', 'polling'] });
+            socket.on('connect', () => {
+                console.log('WebSocket connected');
+                document.getElementById('status').innerText = 'WebSocket connected';
+            });
+            socket.on('disconnect', () => {
+                console.log('WebSocket disconnected');
+                document.getElementById('status').innerText = 'WebSocket disconnected. Reconnecting...';
+                setTimeout(initSocket, 1000);
+            });
+            socket.on('connect_error', (error) => {
+                console.error('WebSocket connection error:', error);
+                document.getElementById('status').innerText = 'WebSocket connection error: ' + error.message;
+            });
+            socket.on('error', (error) => {
+                console.error('SocketIO error:', error);
+                document.getElementById('status').innerText = 'SocketIO error: ' + error;
+            });
+        }
+        initSocket();
 
         // Text-to-Speech function
         function speakResponse(text) {
@@ -151,7 +159,7 @@
         async function startCamera() {
             try {
                 mediaStream = await navigator.mediaDevices.getUserMedia({
-                    video: true,
+                    video: { width: 640, height: 480 }, // Limit resolution
                     audio: false
                 });
                 video.srcObject = mediaStream;
@@ -163,6 +171,9 @@
             } catch (err) {
                 console.error('Error starting camera:', err);
                 document.getElementById('status').innerText = 'Failed to start camera: ' + err.message;
+                if (err.name === 'NotAllowedError') {
+                    alert('Camera access denied. Please allow camera access in your browser settings.');
+                }
             }
         }
 
@@ -193,25 +204,32 @@
                 document.getElementById('status').innerText = 'Frame capture setup failed';
                 return;
             }
+            let retries = 5;
             const sendFrame = () => {
                 try {
                     if (video.videoWidth && video.videoHeight) {
                         canvas.width = video.videoWidth;
                         canvas.height = video.videoHeight;
                         context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                        const imageData = canvas.toDataURL('image/jpeg', 0.5); // Reduced quality
                         socket.emit(eventName, imageData);
                         console.log(`Sent ${eventName} frame, size: ${imageData.length} bytes`);
+                        retries = 5; // Reset retries on success
+                    } else if (retries > 0) {
+                        console.warn(`No video dimensions available, retrying (${retries} left)`);
+                        retries--;
+                        setTimeout(sendFrame, 500);
                     } else {
-                        console.warn('No video dimensions available');
+                        console.error('Failed to capture frame: no video dimensions after retries');
+                        document.getElementById('status').innerText = 'Failed to capture frame: no video feed';
                     }
                 } catch (err) {
                     console.error('Error capturing frame:', err);
                     document.getElementById('status').innerText = 'Error capturing frame: ' + err.message;
                 }
             };
-            sendFrame(); // Send the first frame immediately
-            frameInterval = setInterval(sendFrame, 1000); // Then send every second
+            sendFrame();
+            frameInterval = setInterval(sendFrame, 2000); // Reduced frequency
         }
 
         // Event listeners
@@ -299,7 +317,7 @@
                 isProcessing = false;
                 isRecognitionRunning = false;
                 if (event.error === 'no-speech') {
-                    document.getElementById('status').innerText = 'No speech detected. Please speak clearly.';
+                    document.getElementById').innerText = 'No speech detected. Please speak clearly.';
                 } else if (event.error === 'audio-capture') {
                     document.getElementById('status').innerText = 'Microphone error. Check if microphone is connected.';
                 } else {
@@ -314,24 +332,24 @@
                         try {
                             recognition.start();
                             isRecognitionRunning = true;
-                        } catch (e) {
-                            console.error('Recognition restart failed:', e);
-                            document.getElementById('status').innerText = 'Recognition restart failed: ' + e.message;
+                        } catch (err) {
+                            console.error('Recognition restart failed:', err);
+                            document.getElementById('status').innerText = 'Recognition restart failed: ' + err.message;
                         }
                     }
                 }, 1000);
             };
 
-            // Start recognition when video starts playing
+            // Start recognition when video plays
             video.addEventListener('playing', () => {
                 if (!isRecognitionRunning) {
                     try {
                         recognition.start();
                         isRecognitionRunning = true;
-                        document.getElementById('status').innerText = 'Speech recognition started.';
-                    } catch (e) {
-                        console.error('Failed to start recognition:', e);
-                        document.getElementById('status').innerText = 'Failed to start recognition: ' + e.message;
+                        document.getElementById('status').innerText = 'Speech recognition started';
+                    } catch (err) {
+                        console.error('Error starting recognition:', err);
+                        document.getElementById('status').innerText = 'Error starting recognition: ' + err.message;
                     }
                 }
             });
@@ -340,7 +358,7 @@
         }
 
         // Stop button functionality
-        document.getElementById('stopButton').addEventListener('click', () => {
+        document.getElementById('stopButton').onclick = () => {
             if ('speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
             }
@@ -357,15 +375,15 @@
             })
             .then(response => response.json())
             .then(data => {
-                if (data.redirect) {
-                    window.location.href = data.redirect;
+                if (data.redirected) {
+                    window.location.href = data.url;
                 }
             })
             .catch(err => {
                 console.error('Error stopping stream:', err);
                 document.getElementById('status').innerText = 'Error stopping stream: ' + err.message;
             });
-        });
+        };
 
         // Auto-start sharing on page load
         window.addEventListener('load', () => {
@@ -376,7 +394,7 @@
                         startButton.click();
                     } else {
                         console.error('Start screen share button not found');
-                        document.getElementById('status').innerText = 'Start screen share button not found';
+                        document.getElementById('status').innerText = 'Start screen button error';
                     }
                 } else {
                     const startButton = document.getElementById('startCamera');
@@ -384,7 +402,7 @@
                         startButton.click();
                     } else {
                         console.error('Start camera button not found');
-                        document.getElementById('status').innerText = 'Start camera button not found';
+                        document.getElementById('status').innerText = 'Start camera button error';
                     }
                 }
             }, 1000);
